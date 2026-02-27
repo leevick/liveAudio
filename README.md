@@ -5,7 +5,8 @@ A Python-based HTTP audio streaming server with Icecast metadata support. Stream
 ## Features
 
 - 🎵 **Multiple Format Support**: MP3, OGG, FLAC, M4A, WAV
-- 📡 **Icecast/SHOUTcast Protocol**: ICY metadata for displaying current track info
+- � **Real-time Transcoding**: Convert to AAC, MP3, or OGG on-the-fly
+- �📡 **Icecast/SHOUTcast Protocol**: ICY metadata for displaying current track info
 - 🔄 **Continuous Streaming**: Automatically loops through playlist
 - 📊 **REST API**: Status and playlist endpoints
 - 🎧 **Universal Compatibility**: Works with VLC, Winamp, iTunes, web browsers, and more
@@ -17,6 +18,19 @@ A Python-based HTTP audio streaming server with Icecast metadata support. Stream
 
 ```bash
 pip install -r requirements.txt
+```
+
+**For transcoding support, install ffmpeg:**
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Fedora
+sudo dnf install ffmpeg
 ```
 
 ### 2. Add Audio Files
@@ -83,7 +97,9 @@ http://localhost:5000/stream
     "artist": "Artist Name"
   },
   "playlist_size": 10,
-  "track_index": 3
+  "track_index": 3,
+  "output_format": "aac",
+  "bitrate": 128
 }
 ```
 
@@ -114,12 +130,30 @@ Edit `config.json` to customize server settings:
   "audio_dir": "audio",      // Directory containing audio files
   "host": "0.0.0.0",         // Server host (0.0.0.0 for all interfaces)
   "port": 5000,              // Server port
-  "bitrate": 128,            // Stream bitrate (informational)
-  "chunk_size": 4096         // Chunk size for streaming
+  "bitrate": 128,            // Stream bitrate in kbps
+  "chunk_size": 4096,        // Chunk size for streaming
+  "output_format": "aac"     // Output format: "aac", "mp3", or "ogg"
 }
 ```
 
+### Output Formats
+
+- **`aac`**: AAC audio in ADTS container - best quality/size ratio, modern codec
+- **`mp3`**: MP3 audio - universal compatibility
+- **`ogg`**: OGG Vorbis - open source, good quality
+
+**Note**: If output format differs from source files, the server will transcode in real-time using ffmpeg.
+
 ## How It Works
+
+### Real-time Transcoding
+
+When `output_format` is set to a format different from your source files, the server automatically transcodes audio on-the-fly using ffmpeg:
+
+1. Server detects input file format (MP3, FLAC, WAV, etc.)
+2. If format differs from `output_format`, ffmpeg transcodes in real-time
+3. Transcoded audio is streamed with ICY metadata inserted at regular intervals
+4. No temporary files created - everything happens in memory
 
 ### ICY Protocol
 

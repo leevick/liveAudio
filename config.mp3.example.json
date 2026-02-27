@@ -4,5 +4,5 @@
   "port": 5000,
   "bitrate": 128,
   "chunk_size": 4096,
-  "output_format": "aac"
+  "output_format": "mp3"
 }

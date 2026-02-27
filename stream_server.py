@@ -2,12 +2,15 @@
 """
 Live Audio Streaming Server with Icecast Metadata Support
 Streams audio files (mp3, ogg, etc.) via HTTP with ICY protocol metadata
+Supports transcoding to AAC, MP3, or OGG formats
 """
 
 import os
 import time
 import json
 import threading
+import subprocess
+import io
 from pathlib import Path
 from flask import Flask, Response, request
 from mutagen import File as MutagenFile
@@ -18,14 +21,25 @@ import struct
 app = Flask(__name__)
 
 class AudioStreamer:
-    def __init__(self, audio_dir, bitrate=128, chunk_size=4096):
+    def __init__(self, audio_dir, bitrate=128, chunk_size=4096, output_format='mp3'):
         self.audio_dir = Path(audio_dir)
         self.bitrate = bitrate
         self.chunk_size = chunk_size
+        self.output_format = output_format.lower()
         self.playlist = []
         self.current_track_index = 0
         self.clients = []
         self.lock = threading.Lock()
+        
+        # Validate output format
+        self.supported_outputs = ['mp3', 'aac', 'ogg']
+        if self.output_format not in self.supported_outputs:
+            raise ValueError(f"Output format must be one of {self.supported_outputs}")
+        
+        # Check if ffmpeg is available
+        self.ffmpeg_available = self._check_ffmpeg()
+        if not self.ffmpeg_available:
+            print("Warning: ffmpeg not found. Transcoding disabled. Install with: apt-get install ffmpeg")
         
         # Load playlist
         self.load_playlist()
@@ -44,6 +58,74 @@ class AudioStreamer:
                 self.playlist.append(file)
         
         print(f"Loaded {len(self.playlist)} tracks from {self.audio_dir}")
+    
+    def _check_ffmpeg(self):
+        """Check if ffmpeg is available"""
+        try:
+            subprocess.run(['ffmpeg', '-version'], 
+                         stdout=subprocess.DEVNULL, 
+                         stderr=subprocess.DEVNULL, 
+                         check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+    
+    def get_output_mime_type(self):
+        """Get MIME type for output format"""
+        mime_types = {
+            'mp3': 'audio/mpeg',
+            'aac': 'audio/aac',
+            'ogg': 'audio/ogg'
+        }
+        return mime_types.get(self.output_format, 'audio/mpeg')
+    
+    def _needs_transcoding(self, file_path):
+        """Check if file needs transcoding"""
+        file_ext = file_path.suffix.lower().lstrip('.')
+        
+        # AAC files might be in m4a container
+        if self.output_format == 'aac':
+            return file_ext not in ['m4a', 'aac']
+        
+        return file_ext != self.output_format
+    
+    def _transcode_audio(self, file_path):
+        """Transcode audio file to desired output format using ffmpeg"""
+        codec_map = {
+            'mp3': 'libmp3lame',
+            'aac': 'aac',
+            'ogg': 'libvorbis'
+        }
+        
+        format_map = {
+            'mp3': 'mp3',
+            'aac': 'adts',  # AAC ADTS format for streaming
+            'ogg': 'ogg'
+        }
+        
+        codec = codec_map[self.output_format]
+        out_format = format_map[self.output_format]
+        
+        # Build ffmpeg command
+        cmd = [
+            'ffmpeg',
+            '-i', str(file_path),
+            '-vn',  # No video
+            '-acodec', codec,
+            '-b:a', f'{self.bitrate}k',
+            '-f', out_format,
+            'pipe:1'  # Output to stdout
+        ]
+        
+        # Start ffmpeg process
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=self.chunk_size
+        )
+        
+        return process
         
     def get_metadata(self, file_path):
         """Extract metadata from audio file"""
@@ -97,7 +179,7 @@ class AudioStreamer:
     
     def stream_audio(self, metadata_enabled=True):
         """Generator function that yields audio data with optional metadata"""
-        print(f"New client connected. Metadata: {metadata_enabled}")
+        print(f"New client connected. Metadata: {metadata_enabled}, Output: {self.output_format}")
         
         if not self.playlist:
             yield b"No audio files found in playlist directory\n"
@@ -120,34 +202,78 @@ class AudioStreamer:
             metadata = self.get_metadata(current_file)
             print(f"Now playing: {metadata['artist']} - {metadata['title']}")
             
+            # Determine if transcoding is needed
+            needs_transcode = self._needs_transcoding(current_file)
+            
             # Read and stream the file
             try:
-                with open(current_file, 'rb') as f:
-                    while True:
-                        # Read chunk
-                        if metadata_enabled and bytes_since_metadata + self.chunk_size >= metadata_interval:
-                            # Read only up to metadata point
-                            bytes_to_read = metadata_interval - bytes_since_metadata
-                            chunk = f.read(bytes_to_read)
+                if needs_transcode and self.ffmpeg_available:
+                    # Stream with transcoding
+                    print(f"  Transcoding to {self.output_format}...")
+                    process = self._transcode_audio(current_file)
+                    
+                    try:
+                        while True:
+                            # Read chunk from ffmpeg
+                            chunk = process.stdout.read(self.chunk_size)
                             if not chunk:
                                 break
                             
-                            yield chunk
-                            
-                            # Insert metadata
-                            icy_meta = self.create_icy_metadata(metadata['title'], metadata['artist'])
-                            yield icy_meta
-                            
-                            bytes_since_metadata = 0
-                        else:
-                            chunk = f.read(self.chunk_size)
-                            if not chunk:
-                                break
-                            
-                            yield chunk
-                            
-                            if metadata_enabled:
-                                bytes_since_metadata += len(chunk)
+                            # Handle metadata insertion
+                            if metadata_enabled and bytes_since_metadata + len(chunk) >= metadata_interval:
+                                # Split chunk at metadata point
+                                bytes_to_meta = metadata_interval - bytes_since_metadata
+                                yield chunk[:bytes_to_meta]
+                                
+                                # Insert metadata
+                                icy_meta = self.create_icy_metadata(metadata['title'], metadata['artist'])
+                                yield icy_meta
+                                
+                                # Yield remaining chunk
+                                remaining = chunk[bytes_to_meta:]
+                                if remaining:
+                                    yield remaining
+                                    bytes_since_metadata = len(remaining)
+                                else:
+                                    bytes_since_metadata = 0
+                            else:
+                                yield chunk
+                                if metadata_enabled:
+                                    bytes_since_metadata += len(chunk)
+                    finally:
+                        process.terminate()
+                        process.wait()
+                else:
+                    # Stream without transcoding (direct file read)
+                    if needs_transcode:
+                        print(f"  Warning: File needs transcoding but ffmpeg is not available")
+                    
+                    with open(current_file, 'rb') as f:
+                        while True:
+                            # Read chunk
+                            if metadata_enabled and bytes_since_metadata + self.chunk_size >= metadata_interval:
+                                # Read only up to metadata point
+                                bytes_to_read = metadata_interval - bytes_since_metadata
+                                chunk = f.read(bytes_to_read)
+                                if not chunk:
+                                    break
+                                
+                                yield chunk
+                                
+                                # Insert metadata
+                                icy_meta = self.create_icy_metadata(metadata['title'], metadata['artist'])
+                                yield icy_meta
+                                
+                                bytes_since_metadata = 0
+                            else:
+                                chunk = f.read(self.chunk_size)
+                                if not chunk:
+                                    break
+                                
+                                yield chunk
+                                
+                                if metadata_enabled:
+                                    bytes_since_metadata += len(chunk)
             
             except Exception as e:
                 print(f"Error streaming file {current_file}: {e}")
@@ -173,10 +299,13 @@ def stream():
     # Check if client supports ICY metadata
     icy_metadata = request.headers.get('Icy-MetaData', '0') == '1'
     
+    # Get MIME type based on output format
+    mime_type = streamer.get_output_mime_type()
+    
     # Create response with appropriate headers
     response = Response(
         streamer.stream_audio(metadata_enabled=icy_metadata),
-        mimetype='audio/mpeg',
+        mimetype=mime_type,
         headers={
             'icy-name': 'Live Audio Stream',
             'icy-genre': 'Various',
@@ -185,7 +314,7 @@ def stream():
             'icy-br': str(streamer.bitrate),
             'Cache-Control': 'no-cache, no-store',
             'Connection': 'close',
-            'Content-Type': 'audio/mpeg',
+            'Content-Type': mime_type,
         }
     )
     
@@ -212,7 +341,9 @@ def status():
             "status": "playing",
             "current_track": metadata,
             "playlist_size": len(streamer.playlist),
-            "track_index": streamer.current_track_index
+            "track_index": streamer.current_track_index,
+            "output_format": streamer.output_format,
+            "bitrate": streamer.bitrate
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
@@ -274,7 +405,8 @@ def main():
             "audio_dir": "audio",
             "host": "0.0.0.0",
             "port": 5000,
-            "bitrate": 128
+            "bitrate": 128,
+            "output_format": "mp3"
         }
         # Save default config
         with open(config_file, 'w') as f:
@@ -284,7 +416,8 @@ def main():
     # Initialize streamer
     streamer = AudioStreamer(
         audio_dir=config.get('audio_dir', 'audio'),
-        bitrate=config.get('bitrate', 128)
+        bitrate=config.get('bitrate', 128),
+        output_format=config.get('output_format', 'mp3')
     )
     
     # Start Flask server
@@ -294,6 +427,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"Live Audio Streaming Server Starting...")
     print(f"{'='*60}")
+    print(f"Output Format: {streamer.output_format.upper()} @ {streamer.bitrate}kbps")
     print(f"Stream URL: http://localhost:{port}/stream")
     print(f"Status API: http://localhost:{port}/status")
     print(f"Playlist API: http://localhost:{port}/playlist")
