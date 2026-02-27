@@ -5,5 +5,5 @@
   "bitrate": 128,
   "chunk_size": 4096,
   "output_format": "aac",
-  "metadata_mode": "auto"
+  "metadata_mode": "forced"
 }
