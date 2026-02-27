@@ -4,5 +4,6 @@
   "port": 5000,
   "bitrate": 128,
   "chunk_size": 4096,
-  "output_format": "mp3"
+  "output_format": "mp3",
+  "metadata_mode": "forced"
 }

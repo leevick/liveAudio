@@ -35,7 +35,8 @@ Edit `config.json`:
   "port": 5000,
   "bitrate": 96,
   "chunk_size": 4096,
-  "output_format": "aac"
+  "output_format": "aac",
+  "metadata_mode": "auto"
 }
 ```
 
@@ -106,6 +107,37 @@ Look for these headers:
 - `Content-Type: audio/aac` - AAC format
 - `icy-br: 96` - Bitrate
 
+## Metadata Configuration
+
+The server supports three metadata modes configured via `metadata_mode` in config.json:
+
+### `auto` (Default)
+Metadata is sent only if the client requests it with `Icy-MetaData: 1` header.
+```json
+{
+  "metadata_mode": "auto"
+}
+```
+**Best for**: General use, maximum compatibility
+
+### `forced`
+Metadata is always sent to all clients, regardless of their request.
+```json
+{
+  "metadata_mode": "forced"
+}
+```
+**Best for**: Ensuring all clients get track info, custom players, debugging
+
+### `disable`
+Metadata is never sent, even if client requests it.
+```json
+{
+  "metadata_mode": "disable"
+}
+```
+**Best for**: Background music, reducing overhead, testing pure audio stream
+
 ## Performance Notes
 
 ### CPU Usage
@@ -169,7 +201,8 @@ For advanced users, you can modify the `_transcode_audio` method in `stream_serv
 ```json
 {
   "bitrate": 64,
-  "output_format": "aac"
+  "output_format": "aac",
+  "metadata_mode": "forced"
 }
 ```
 
@@ -177,7 +210,8 @@ For advanced users, you can modify the `_transcode_audio` method in `stream_serv
 ```json
 {
   "bitrate": 96,
-  "output_format": "aac"
+  "output_format": "aac",
+  "metadata_mode": "auto"
 }
 ```
 
@@ -185,6 +219,7 @@ For advanced users, you can modify the `_transcode_audio` method in `stream_serv
 ```json
 {
   "bitrate": 192,
-  "output_format": "aac"
+  "output_format": "aac",
+  "metadata_mode": "auto"
 }
 ```

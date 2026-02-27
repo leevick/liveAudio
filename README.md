@@ -99,7 +99,8 @@ http://localhost:5000/stream
   "playlist_size": 10,
   "track_index": 3,
   "output_format": "aac",
-  "bitrate": 128
+  "bitrate": 128,
+  "metadata_mode": "auto"
 }
 ```
 
@@ -132,7 +133,8 @@ Edit `config.json` to customize server settings:
   "port": 5000,              // Server port
   "bitrate": 128,            // Stream bitrate in kbps
   "chunk_size": 4096,        // Chunk size for streaming
-  "output_format": "aac"     // Output format: "aac", "mp3", or "ogg"
+  "output_format": "aac",    // Output format: "aac", "mp3", or "ogg"
+  "metadata_mode": "auto"    // Metadata mode: "auto", "forced", or "disable"
 }
 ```
 
@@ -143,6 +145,17 @@ Edit `config.json` to customize server settings:
 - **`ogg`**: OGG Vorbis - open source, good quality
 
 **Note**: If output format differs from source files, the server will transcode in real-time using ffmpeg.
+
+### Metadata Modes
+
+- **`auto`** (default): ICY metadata sent only if client requests it via `Icy-MetaData: 1` header
+- **`forced`**: Always send ICY metadata to all clients, regardless of their request
+- **`disable`**: Never send ICY metadata, even if client requests it
+
+**Use Cases**:
+- `auto`: Best for general purpose streaming, compatible with all clients
+- `forced`: Ensures metadata is always available, useful for custom clients or debugging
+- `disable`: Reduces overhead when metadata is not needed (e.g., background music)
 
 ## How It Works
 

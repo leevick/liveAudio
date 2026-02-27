@@ -21,11 +21,12 @@ import struct
 app = Flask(__name__)
 
 class AudioStreamer:
-    def __init__(self, audio_dir, bitrate=128, chunk_size=4096, output_format='mp3'):
+    def __init__(self, audio_dir, bitrate=128, chunk_size=4096, output_format='mp3', metadata_mode='auto'):
         self.audio_dir = Path(audio_dir)
         self.bitrate = bitrate
         self.chunk_size = chunk_size
         self.output_format = output_format.lower()
+        self.metadata_mode = metadata_mode.lower()
         self.playlist = []
         self.current_track_index = 0
         self.clients = []
@@ -35,6 +36,11 @@ class AudioStreamer:
         self.supported_outputs = ['mp3', 'aac', 'ogg']
         if self.output_format not in self.supported_outputs:
             raise ValueError(f"Output format must be one of {self.supported_outputs}")
+        
+        # Validate metadata mode
+        self.supported_metadata_modes = ['auto', 'forced', 'disable']
+        if self.metadata_mode not in self.supported_metadata_modes:
+            raise ValueError(f"Metadata mode must be one of {self.supported_metadata_modes}")
         
         # Check if ffmpeg is available
         self.ffmpeg_available = self._check_ffmpeg()
@@ -78,6 +84,22 @@ class AudioStreamer:
             'ogg': 'audio/ogg'
         }
         return mime_types.get(self.output_format, 'audio/mpeg')
+    
+    def should_enable_metadata(self, client_request):
+        """Determine if metadata should be enabled based on mode and client request
+        
+        Args:
+            client_request: Boolean indicating if client requested metadata (Icy-MetaData header)
+        
+        Returns:
+            Boolean indicating if metadata should be enabled
+        """
+        if self.metadata_mode == 'forced':
+            return True
+        elif self.metadata_mode == 'disable':
+            return False
+        else:  # auto
+            return client_request
     
     def _needs_transcoding(self, file_path):
         """Check if file needs transcoding"""
@@ -297,7 +319,10 @@ def stream():
         return "No audio files available. Please add audio files to the 'audio' directory.", 503
     
     # Check if client supports ICY metadata
-    icy_metadata = request.headers.get('Icy-MetaData', '0') == '1'
+    client_requested_metadata = request.headers.get('Icy-MetaData', '0') == '1'
+    
+    # Determine if metadata should be enabled based on mode
+    icy_metadata = streamer.should_enable_metadata(client_requested_metadata)
     
     # Get MIME type based on output format
     mime_type = streamer.get_output_mime_type()
@@ -318,7 +343,7 @@ def stream():
         }
     )
     
-    # Add metadata interval header if client supports it
+    # Add metadata interval header if metadata is enabled
     if icy_metadata:
         response.headers['icy-metaint'] = '16000'
     
@@ -343,7 +368,8 @@ def status():
             "playlist_size": len(streamer.playlist),
             "track_index": streamer.current_track_index,
             "output_format": streamer.output_format,
-            "bitrate": streamer.bitrate
+            "bitrate": streamer.bitrate,
+            "metadata_mode": streamer.metadata_mode
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
@@ -406,7 +432,8 @@ def main():
             "host": "0.0.0.0",
             "port": 5000,
             "bitrate": 128,
-            "output_format": "mp3"
+            "output_format": "mp3",
+            "metadata_mode": "auto"
         }
         # Save default config
         with open(config_file, 'w') as f:
@@ -417,7 +444,8 @@ def main():
     streamer = AudioStreamer(
         audio_dir=config.get('audio_dir', 'audio'),
         bitrate=config.get('bitrate', 128),
-        output_format=config.get('output_format', 'mp3')
+        output_format=config.get('output_format', 'mp3'),
+        metadata_mode=config.get('metadata_mode', 'auto')
     )
     
     # Start Flask server
@@ -428,6 +456,7 @@ def main():
     print(f"Live Audio Streaming Server Starting...")
     print(f"{'='*60}")
     print(f"Output Format: {streamer.output_format.upper()} @ {streamer.bitrate}kbps")
+    print(f"Metadata Mode: {streamer.metadata_mode}")
     print(f"Stream URL: http://localhost:{port}/stream")
     print(f"Status API: http://localhost:{port}/status")
     print(f"Playlist API: http://localhost:{port}/playlist")
