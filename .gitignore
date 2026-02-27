@@ -1,0 +1,24 @@
+# Python virtual environment
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Audio files (uncomment if you don't want to commit audio files)
+audio/*.mp3
+audio/*.ogg
+audio/*.flac
+audio/*.m4a
+audio/*.wav

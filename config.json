@@ -1,0 +1,7 @@
+{
+  "audio_dir": "audio",
+  "host": "0.0.0.0",
+  "port": 5000,
+  "bitrate": 128,
+  "chunk_size": 4096
+}
